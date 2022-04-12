@@ -2,7 +2,7 @@
 
 Gobrut is a tool to perform brute force web form attacks. It currently supports json and form bodies.
 
-## Usage
+## Usage
 
     go run main.go -t <url> -u <usernames.txt> -p <passwords.txt> -m <json|form> -n <usernameField> -s <passwordField> -f <failText> -b <extraBody>
 
