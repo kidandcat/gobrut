@@ -2,7 +2,7 @@
 
 Gobrut is a tool to perform brute force web form attacks. It currently supports json and form bodies.
 
-## Install
+## Install
 
     go install github.com/kidandcat/gobrut@latest
 
