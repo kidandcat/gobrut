@@ -21,3 +21,7 @@ Jenkins:
 ## License
 
 MIT
+
+## Acknowledgments
+
+Thanks to master @s4vitar; Se tensó Jenkins!
