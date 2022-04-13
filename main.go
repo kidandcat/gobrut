@@ -20,6 +20,7 @@ const ClearLine = "\033[2K"
 var spinner = []string{"◐", "◓", "◑", "◒"}
 var extraBody = flag.String("b", "", "Extra body in the form of key=value&key2=value2")
 var failedText = flag.String("f", "", "If this text is in the response, the login failed")
+var symbols = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 var verbose = flag.Bool("v", false, "Verbose")
 var total = 0
 var current = 0
@@ -34,15 +35,16 @@ type response struct {
 func main() {
 	fmt.Println()
 	url := flag.String("t", "http://localhost", "The POST URL")
-	userfile := flag.String("u", "usernames.txt", "Usernames.txt file")
-	passfile := flag.String("p", "passwords.txt", "Passwords.txt file")
+	userfile := flag.String("u", "", "Usernames.txt file")
+	passfile := flag.String("p", "", "Passwords.txt file")
+	length := flag.Int("l", 4, "Max length of the password to test")
 	mode := flag.String("m", "", "Mode: json, form, cmd")
 	usernameField := flag.String("n", "username", "Username field name")
 	passwordField := flag.String("s", "password", "Password field name")
 	workers := flag.Int("w", 1, "Number of workers")
 	flag.Parse()
 
-	if *userfile == "" || *passfile == "" || *mode == "" {
+	if *userfile == "" || *mode == "" {
 		fmt.Println("Usage: go run main.go -t <url> -u <usernames.txt> -p <passwords.txt> -m <json|form> -n <usernameField> -s <passwordField> -w <workers>")
 		fmt.Println("Example: go run main.go -t http://localhost/login -u usernames.txt -p passwords.txt -m json -n username -s password -w 10")
 		return
@@ -55,7 +57,23 @@ func main() {
 	}
 
 	usernames := readIn(*userfile)
-	passwords := readIn(*passfile)
+	var passwords []string
+	if *passfile != "" {
+		passwords = readIn(*passfile)
+	} else {
+		if *verbose {
+			fmt.Println("Passwords file not provided, generating password permutations...")
+		}
+		wgp := sync.WaitGroup{}
+		for i := 1; i <= *length; i++ {
+			wgp.Add(1)
+			go func(i int) {
+				passwords = append(passwords, generatePermutations(symbols, i)...)
+				wgp.Done()
+			}(i)
+		}
+		wgp.Wait()
+	}
 	total = len(usernames) * len(passwords)
 	failedTexts = strings.Split(*failedText, ",")
 
@@ -68,13 +86,26 @@ func main() {
 	wg.Wait()
 }
 
+func generatePermutations(symbols string, length int) []string {
+	if length == 0 {
+		return []string{""}
+	}
+	var result []string
+	for i := 0; i < len(symbols); i++ {
+		for _, perm := range generatePermutations(symbols[i+1:], length-1) {
+			result = append(result, symbols[i:i+1]+perm)
+		}
+	}
+	return result
+}
+
 var loaderIndex = 0
 var lastProgress = 0
 
 func updateProgress() {
 	for range time.Tick(time.Millisecond * 500) {
 		speed := current - lastProgress
-		fmt.Printf("\n\033[1A\033[K Progress: %d%% %s %d/ops", current*100/total, spinner[loaderIndex], speed*2)
+		fmt.Printf("\033[1A\033[K Progress: %d%% %s %d/ops\n", current*100/total, spinner[loaderIndex], speed*2)
 		lastProgress = current
 		loaderIndex++
 		if loaderIndex == len(spinner) {
