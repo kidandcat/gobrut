@@ -9,13 +9,17 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"runtime"
+	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 var extraBody = flag.String("b", "", "Extra body in the form of key=value&key2=value2")
 var failedText = flag.String("f", "", "If this text is in the response, the login failed")
+var verbose = flag.Bool("v", false, "Verbose")
+var total = 0
+var current = 0
 
 type response struct {
 	Username string
@@ -27,17 +31,18 @@ func main() {
 	url := flag.String("t", "http://localhost", "The POST URL")
 	userfile := flag.String("u", "usernames.txt", "Usernames.txt file")
 	passfile := flag.String("p", "passwords.txt", "Passwords.txt file")
-	mode := flag.String("m", "", "Mode: json, form")
+	mode := flag.String("m", "", "Mode: json, form, cmd")
 	usernameField := flag.String("n", "username", "Username field name")
 	passwordField := flag.String("s", "password", "Password field name")
+	workers := flag.Int("w", 1, "Number of workers")
 	flag.Parse()
 
 	if *userfile == "" || *passfile == "" || *mode == "" {
-		fmt.Println("Usage: go run main.go -t <url> -u <usernames.txt> -p <passwords.txt> -m <json|form> -n <usernameField> -s <passwordField>")
-		fmt.Println("Example: go run main.go -t http://localhost/login -u usernames.txt -p passwords.txt -m json -n username -s password")
+		fmt.Println("Usage: go run main.go -t <url> -u <usernames.txt> -p <passwords.txt> -m <json|form> -n <usernameField> -s <passwordField> -w <workers>")
+		fmt.Println("Example: go run main.go -t http://localhost/login -u usernames.txt -p passwords.txt -m json -n username -s password -w 10")
 		return
 	}
-	if *mode != "json" && *mode != "form" {
+	if *mode != "json" && *mode != "form" && *mode != "cmd" {
 		panic("Mode not supported")
 	}
 	if *failedText == "" {
@@ -46,13 +51,21 @@ func main() {
 
 	usernames := readIn(*userfile)
 	passwords := readIn(*passfile)
+	total = len(usernames) * len(passwords)
 
 	var wg sync.WaitGroup
-	for i := 0; i < runtime.NumCPU(); i++ {
+	for i := 0; i < *workers; i++ {
 		wg.Add(1)
-		go worker(&wg, i, *url, usernames, passwords, *mode, *usernameField, *passwordField)
+		go worker(&wg, *workers, i, *url, usernames, passwords, *mode, *usernameField, *passwordField)
 	}
+	go updateProgress()
 	wg.Wait()
+}
+
+func updateProgress() {
+	for range time.Tick(time.Second * 1) {
+		fmt.Printf("\r Progress: %d%%  %d/%d", current*100/total, current, total)
+	}
 }
 
 func readIn(passwordFile string) []string {
@@ -62,15 +75,18 @@ func readIn(passwordFile string) []string {
 }
 
 // worker process a batch of usernames and passwords divieded by the number of cores
-func worker(wg *sync.WaitGroup, workerNum int, url string, usernames, passwords []string, mode, usernameField, passwordField string) {
+func worker(wg *sync.WaitGroup, workers, workerNum int, url string, usernames, passwords []string, mode, usernameField, passwordField string) {
 	defer wg.Done()
-	for i := workerNum; i < len(usernames); i += runtime.NumCPU() {
+	for i := workerNum; i < len(usernames); i += workers {
 		for _, password := range passwords {
 			if mode == "json" {
 				postToURLJson(url, usernames[i], password, usernameField, passwordField)
 			} else if mode == "form" {
 				postToURLForm(url, usernames[i], password, usernameField, passwordField)
+			} else if mode == "cmd" {
+				executeCommand(url, usernames[i], password, usernameField, passwordField)
 			}
+			current++
 		}
 	}
 }
@@ -139,6 +155,22 @@ func postToURLForm(posturl, username, password, usernameField, passwordField str
 		if !strings.Contains(string(body), *failedText) {
 			fmt.Println("Successfully logged in: ", username, password)
 		}
+	}
+}
+
+func executeCommand(command, username, password, usernameField, passwordField string) {
+	commandF := strings.Replace(command, usernameField, username, -1)
+	commandF = strings.Replace(commandF, passwordField, password, -1)
+	cmd := exec.Command(strings.Split(commandF, " ")[0], strings.Split(commandF, " ")[1:]...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	if err != nil && *verbose {
+		fmt.Println(err)
+	}
+	if !strings.Contains(out.String(), *failedText) {
+		fmt.Println("Successfully executed: ", username, password)
 	}
 }
 
