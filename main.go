@@ -15,11 +15,15 @@ import (
 	"time"
 )
 
+const ClearLine = "\033[2K"
+
+var spinner = []string{"◐", "◓", "◑", "◒"}
 var extraBody = flag.String("b", "", "Extra body in the form of key=value&key2=value2")
 var failedText = flag.String("f", "", "If this text is in the response, the login failed")
 var verbose = flag.Bool("v", false, "Verbose")
 var total = 0
 var current = 0
+var failedTexts []string
 
 type response struct {
 	Username string
@@ -28,6 +32,7 @@ type response struct {
 }
 
 func main() {
+	fmt.Println()
 	url := flag.String("t", "http://localhost", "The POST URL")
 	userfile := flag.String("u", "usernames.txt", "Usernames.txt file")
 	passfile := flag.String("p", "passwords.txt", "Passwords.txt file")
@@ -52,6 +57,7 @@ func main() {
 	usernames := readIn(*userfile)
 	passwords := readIn(*passfile)
 	total = len(usernames) * len(passwords)
+	failedTexts = strings.Split(*failedText, ",")
 
 	var wg sync.WaitGroup
 	for i := 0; i < *workers; i++ {
@@ -62,9 +68,18 @@ func main() {
 	wg.Wait()
 }
 
+var loaderIndex = 0
+var lastProgress = 0
+
 func updateProgress() {
-	for range time.Tick(time.Second * 1) {
-		fmt.Printf("\r Progress: %d%%  %d/%d", current*100/total, current, total)
+	for range time.Tick(time.Millisecond * 500) {
+		speed := current - lastProgress
+		fmt.Printf("\n\033[1A\033[K Progress: %d%% %s %d/ops", current*100/total, spinner[loaderIndex], speed*2)
+		lastProgress = current
+		loaderIndex++
+		if loaderIndex == len(spinner) {
+			loaderIndex = 0
+		}
 	}
 }
 
@@ -111,13 +126,14 @@ func postToURLJson(url, username, password, usernameField, passwordField string)
 	panicOnErr(err)
 	defer resp.Body.Close()
 
-	if *failedText != "" {
+	for _, v := range failedTexts {
 		body, err := io.ReadAll(resp.Body)
 		panicOnErr(err)
-		if !strings.Contains(string(body), *failedText) {
-			fmt.Println("Successfully logged in: ", username, password)
+		if strings.Contains(string(body), v) {
+			return
 		}
 	}
+	fmt.Println("Successfully logged in: ", username, password)
 }
 
 func postToURLForm(posturl, username, password, usernameField, passwordField string) {
@@ -149,13 +165,14 @@ func postToURLForm(posturl, username, password, usernameField, passwordField str
 	panicOnErr(err)
 	defer resp.Body.Close()
 
-	if *failedText != "" {
+	for _, v := range failedTexts {
 		body, err := io.ReadAll(resp.Body)
 		panicOnErr(err)
-		if !strings.Contains(string(body), *failedText) {
-			fmt.Println("Successfully logged in: ", username, password)
+		if strings.Contains(string(body), v) {
+			return
 		}
 	}
+	fmt.Println("Successfully logged in: ", username, password)
 }
 
 func executeCommand(command, username, password, usernameField, passwordField string) {
@@ -169,9 +186,12 @@ func executeCommand(command, username, password, usernameField, passwordField st
 	if err != nil && *verbose {
 		fmt.Println(err)
 	}
-	if !strings.Contains(out.String(), *failedText) {
-		fmt.Println("Successfully executed: ", username, password)
+	for _, v := range failedTexts {
+		if strings.Contains(out.String(), v) {
+			return
+		}
 	}
+	fmt.Println("Successfully executed: ", username, password, out.String())
 }
 
 func panicOnErr(err error) {
